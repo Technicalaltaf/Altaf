@@ -6,9 +6,11 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 let cache = null;
-let loading = true;
+let lastSuccessTime = null;
 let lastError = null;
+let loading = false;
 
+/* ================= CHROMIUM PATH ================= */
 function getChromiumPath() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
@@ -20,21 +22,38 @@ function getChromiumPath() {
   }
 }
 
+/* ================= FETCH DATA ================= */
 async function fetchData() {
+  let browser;
   loading = true;
   lastError = null;
-  let browser = null;
-  
-  console.log("Fetching live data...");
+
+  console.log("⏳ Fetching bullion data...");
 
   try {
     browser = await puppeteer.launch({
       headless: "new",
       executablePath: getChromiumPath(),
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled"
+      ]
     });
 
     const page = await browser.newPage();
+
+    /* ---------- Fake human-ish headers ---------- */
+    await page.setUserAgent(
+      "Mozilla/5.0 (Linux; Android 11; Redmi Note 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0 Mobile Safari/537.36"
+    );
+
+    await page.setExtraHTTPHeaders({
+      "accept-language": "en-IN,en;q=0.9",
+      "upgrade-insecure-requests": "1"
+    });
 
     await page.setViewport({
       width: 390,
@@ -43,27 +62,23 @@ async function fetchData() {
     });
 
     await page.goto("http://anjujewellery.in/", {
-      waitUntil: "networkidle2",
+      waitUntil: "domcontentloaded",
       timeout: 60000
     });
 
-    await new Promise(resolve => setTimeout(resolve, 6000));
+    await page.waitForTimeout(6000);
 
     const data = await page.evaluate(() => {
-
-      function getBox(title) {
-        const headers = Array.from(document.querySelectorAll("div"))
+      function extract(title) {
+        const nodes = Array.from(document.querySelectorAll("div"))
           .filter(d => d.innerText && d.innerText.includes(title));
 
-        if (!headers.length) return null;
+        if (!nodes.length) return null;
 
-        const box = headers[0].closest("div");
-
+        const box = nodes[0].closest("div");
         if (!box) return null;
 
-        const spans = box.querySelectorAll("span");
-
-        const nums = Array.from(spans)
+        const nums = Array.from(box.querySelectorAll("span"))
           .map(s => s.innerText.trim())
           .filter(v => /^[0-9]/.test(v));
 
@@ -77,66 +92,80 @@ async function fetchData() {
 
       return {
         spots: {
-          gold: getBox("GOLD SPOT"),
-          silver: getBox("SILVER SPOT"),
-          inr: getBox("INR SPOT")
+          gold: extract("GOLD SPOT"),
+          silver: extract("SILVER SPOT"),
+          inr: extract("INR SPOT")
         },
         futures: {
-          gold: getBox("GOLD FUTURE"),
-          silver: getBox("SILVER FUTURE")
+          gold: extract("GOLD FUTURE"),
+          silver: extract("SILVER FUTURE")
         },
         next: {
-          gold: getBox("GOLD NEXT"),
-          silver: getBox("SILVER NEXT")
-        },
-        tables: Array.from(document.querySelectorAll("table"))
-          .map(t => t.outerHTML)
+          gold: extract("GOLD NEXT"),
+          silver: extract("SILVER NEXT")
+        }
       };
     });
 
+    /* ---------- Validate data ---------- */
+    const valid =
+      data &&
+      data.spots &&
+      (data.spots.gold || data.spots.silver);
+
+    if (!valid) {
+      throw new Error("Blocked / Invalid DOM received");
+    }
+
     cache = data;
-    console.log("Data updated");
-  } catch (error) {
-    console.error("Error fetching data:", error.message);
-    lastError = error.message;
+    lastSuccessTime = new Date().toISOString();
+    console.log("✅ Data updated successfully");
+
+  } catch (err) {
+    console.error("❌ Fetch failed:", err.message);
+    lastError = err.message;
   } finally {
     loading = false;
     if (browser) {
-      try {
-        await browser.close();
-      } catch (e) {
-        console.error("Error closing browser:", e.message);
-      }
+      try { await browser.close(); } catch {}
     }
   }
 }
 
-async function startScheduler() {
+/* ================= SCHEDULER ================= */
+async function scheduler() {
   while (true) {
     await fetchData();
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    await new Promise(r => setTimeout(r, 10000));
   }
 }
+scheduler();
 
-startScheduler();
-
+/* ================= ROUTES ================= */
 app.get("/", (req, res) => {
   res.send("Ambica Live Server OK");
 });
 
 app.get("/data", (req, res) => {
-  if (loading) {
+  if (loading && !cache) {
     return res.json({ status: "loading" });
   }
-  if (!cache && lastError) {
-    return res.json({ status: "error", error: lastError });
-  }
+
   if (!cache) {
-    return res.json({ status: "loading" });
+    return res.json({
+      status: "error",
+      error: lastError || "No data yet"
+    });
   }
-  res.json({ status: "ok", data: cache });
+
+  res.json({
+    status: "ok",
+    last_update: lastSuccessTime,
+    source: "puppeteer",
+    data: cache
+  });
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on", PORT);
+  console.log("🚀 Server running on port", PORT);
 });
