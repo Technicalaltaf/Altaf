@@ -1,12 +1,13 @@
 {
-  "name": "bullion-socket",
+  "name": "anju-rate-scraper",
   "version": "1.0.0",
+  "description": "Scrape Anju Jewellery exact RTGS & Retail prices",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "socket.io-client": "^4.7.5"
+    "puppeteer": "^23.0.0"
   }
 }
