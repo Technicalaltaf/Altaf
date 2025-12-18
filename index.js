@@ -1,97 +1,96 @@
+/**
+ * OPTION B – SOCKET LISTENER SERVER
+ * Stable for Railway
+ */
+
 const express = require("express");
 const http = require("http");
-const { Server } = require("socket.io");
+const { io } = require("socket.io-client");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
 
 const PORT = process.env.PORT || 5000;
 
-// ================= CACHE =================
-let live = {
+/* ================= CONFIG ================= */
+
+// Anju Jewellery socket endpoint
+const SOCKET_URL = "https://starlinesupport.in";
+
+// IMPORTANT: same namespace jo Anju use karta hai
+const SOCKET_PATH = "/socket.io";
+
+/* ================= STATE ================= */
+
+let cache = {
+  status: "loading",
+  socket: "disconnected",
   last_update: null,
-  spot: {},
-  future: {},
-  next: {},
-  table: []
+  data: []
 };
 
-// ================= SOCKET CLIENT =================
-const socketClient = require("socket.io-client");
+/* ================= SOCKET CLIENT ================= */
 
-const ANJU_SOCKET = "https://starlinesupport.in"; 
-// ye domain anju ke socket ka base hai (actual socket wahi hota hai)
+console.log("Connecting to socket...");
 
-const socket = socketClient(ANJU_SOCKET, {
+const socket = io(SOCKET_URL, {
+  path: SOCKET_PATH,
   transports: ["websocket"],
   reconnection: true,
+  reconnectionAttempts: Infinity,
   reconnectionDelay: 2000
 });
 
 socket.on("connect", () => {
-  console.log("✅ Connected to Anju socket");
+  console.log("Socket connected:", socket.id);
+  cache.socket = "connected";
 });
 
 socket.on("disconnect", () => {
-  console.log("❌ Socket disconnected");
+  console.log("Socket disconnected");
+  cache.socket = "disconnected";
 });
 
-// ================= LIVE RATE =================
-socket.on("Liverate", (data) => {
-  data.forEach(item => {
-    if (item.symbol === "gold") live.future.gold = item;
-    if (item.symbol === "silver") live.future.silver = item;
-    if (item.symbol === "goldnext") live.next.gold = item;
-    if (item.symbol === "silvernext") live.next.silver = item;
-    if (item.symbol === "XAUUSD") live.spot.gold = item;
-    if (item.symbol === "XAGUSD") live.spot.silver = item;
-    if (item.symbol === "INRSpot") live.spot.inr = item;
-  });
+/**
+ * MAIN LIVE RATE EVENT
+ * यही असली data है
+ */
+socket.on("Liverate", (payload) => {
+  try {
+    // Payload format: ["Liverate", [ {...}, {...} ]]
+    const rates = Array.isArray(payload) ? payload[1] : payload;
 
-  live.last_update = new Date().toISOString();
-});
+    if (Array.isArray(rates)) {
+      cache.status = "ok";
+      cache.data = rates;
+      cache.last_update = new Date().toISOString();
 
-// ================= TABLE (PRODUCT RATES) =================
-socket.on("message", (payload) => {
-  if (!payload || !payload.Rate) return;
-
-  live.table = payload.Rate.map(r => ({
-    name: r.Symbol,
-    weight: r.Description,
-    ask: r.Ask,
-    bid: r.Bid,
-    high: r.High,
-    low: r.Low,
-    time: r.Time,
-    type: r.DisplayRateType // fix / mcx
-  }));
-
-  live.last_update = new Date().toISOString();
-});
-
-// ================= API =================
-app.get("/data", (req, res) => {
-  if (!live.last_update) {
-    return res.json({
-      status: "loading",
-      socket: "connected",
-      data: []
-    });
+      console.log("Live rate updated:", rates.length);
+    }
+  } catch (e) {
+    console.error("Liverate parse error:", e.message);
   }
-
-  res.json({
-    status: "ok",
-    socket: socket.connected ? "connected" : "error",
-    last_update: live.last_update,
-    data: live
-  });
 });
+
+/**
+ * Ignore other noisy events safely
+ */
+socket.onAny((event, data) => {
+  if (event !== "Liverate") return;
+});
+
+/* ================= HTTP API ================= */
 
 app.get("/", (req, res) => {
-  res.send("Option B Live Server Running");
+  res.send("Live bullion server running");
 });
 
-server.listen(PORT, () => {
-  console.log("🚀 Server running on", PORT);
+app.get("/data", (req, res) => {
+  res.json(cache);
+});
+
+/* ================= START ================= */
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port", PORT);
 });
