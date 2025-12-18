@@ -1,12 +1,17 @@
 {
   "name": "bullion-live-socket",
   "version": "1.0.0",
+  "description": "Live bullion rates socket listener",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.19.2",
+    "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
