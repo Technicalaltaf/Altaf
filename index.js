@@ -1,23 +1,22 @@
 const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io-client");
+const { io } = require("socket.io-client");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 /* ===============================
-   GLOBAL STATE
+   STATE
 ================================ */
 let liveRates = [];
 let lastUpdate = null;
-let socketConnected = false;
+let socketStatus = "disconnected";
 
 /* ===============================
-   SOCKET.IO CLIENT
+   SOCKET.IO CLIENT (CORRECT)
 ================================ */
-const SOCKET_URL = "wss://starlinesupport.in";
+const SOCKET_URL = "https://starlinesupport.in";
 
-const socket = Server(SOCKET_URL, {
+const socket = io(SOCKET_URL, {
   path: "/socket.io/",
   transports: ["websocket"],
   reconnection: true,
@@ -30,63 +29,44 @@ const socket = Server(SOCKET_URL, {
    SOCKET EVENTS
 ================================ */
 socket.on("connect", () => {
-  socketConnected = true;
+  socketStatus = "connected";
   console.log("✅ Socket connected");
 
-  // join anju jewellery room
   socket.emit("room", "anjujewellery");
 });
 
 socket.on("disconnect", (reason) => {
-  socketConnected = false;
+  socketStatus = "disconnected";
   console.log("❌ Socket disconnected:", reason);
 });
 
 socket.on("connect_error", (err) => {
-  socketConnected = false;
-  console.error("⚠️ Socket connect error:", err.message);
+  socketStatus = "error";
+  console.error("⚠️ Socket error:", err.message);
 });
 
 /* ===============================
-   LIVE RATE HANDLER
+   LIVE RATE DATA
 ================================ */
-socket.on("Liverate", (payload) => {
-  try {
-    if (Array.isArray(payload)) {
-      liveRates = payload;
-      lastUpdate = new Date().toISOString();
-      console.log("📡 Live rate updated:", payload.length);
-    }
-  } catch (e) {
-    console.error("Rate parse error:", e.message);
+socket.on("Liverate", (data) => {
+  if (Array.isArray(data)) {
+    liveRates = data;
+    lastUpdate = new Date().toISOString();
+    console.log("📡 Rates updated:", data.length);
   }
-});
-
-/* ===============================
-   SAFETY NETS (IMPORTANT)
-================================ */
-process.on("unhandledRejection", (err) => {
-  console.error("Unhandled rejection:", err);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught exception:", err);
 });
 
 /* ===============================
    HTTP ROUTES
 ================================ */
-
-// Health check (Railway needs this)
 app.get("/", (req, res) => {
-  res.send("Anju Live Server OK");
+  res.send("Anju Live Socket Server OK");
 });
 
-// API for frontend (fetch.php replacement)
 app.get("/data", (req, res) => {
   res.json({
     status: "ok",
-    socket: socketConnected ? "connected" : "disconnected",
+    socket: socketStatus,
     last_update: lastUpdate,
     data: liveRates,
   });
@@ -98,3 +78,9 @@ app.get("/data", (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+/* ===============================
+   SAFETY (Railway crash guard)
+================================ */
+process.on("unhandledRejection", (e) => console.error(e));
+process.on("uncaughtException", (e) => console.error(e));
