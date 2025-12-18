@@ -1,40 +1,95 @@
 const express = require("express");
-const http = require("http");
-const { io } = require("socket.io-client");
+const puppeteer = require("puppeteer");
 
 const app = express();
-const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
-
-const SOCKET_URL = "https://starlinesupport.in";
-const SOCKET_PATH = "/socket.io";
 
 let cache = {
   status: "loading",
-  socket: "disconnected",
   last_update: null,
-  data: []
+  rtgs: [],
+  retail: []
 };
 
-const socket = io(SOCKET_URL, {
-  path: SOCKET_PATH,
-  transports: ["websocket"],
-  reconnection: true
+async function fetchData() {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 390, height: 844 });
+
+    await page.goto("https://anjujewellery.in/", {
+      waitUntil: "networkidle2",
+      timeout: 60000
+    });
+
+    await page.waitForTimeout(5000);
+
+    const data = await page.evaluate(() => {
+
+      function extractTable(sectionTitle) {
+        const sections = Array.from(document.querySelectorAll("h4, h3"))
+          .filter(h => h.innerText.includes(sectionTitle));
+
+        if (!sections.length) return [];
+
+        const table = sections[0].closest("div").querySelector("table");
+        if (!table) return [];
+
+        const rows = Array.from(table.querySelectorAll("tbody tr"));
+
+        return rows.map(tr => {
+          const tds = tr.querySelectorAll("td");
+          return {
+            product: tds[0]?.innerText.trim() || "",
+            weight: tds[1]?.innerText.trim() || "",
+            price: tds[2]?.innerText.replace(/,/g, "").trim() || "",
+            time: new Date().toLocaleTimeString()
+          };
+        });
+      }
+
+      return {
+        rtgs: extractTable("RTGS"),
+        retail: extractTable("RETAIL")
+      };
+    });
+
+    cache = {
+      status: "ok",
+      last_update: new Date().toISOString(),
+      rtgs: data.rtgs,
+      retail: data.retail
+    };
+
+    console.log("Rates updated");
+
+  } catch (err) {
+    console.log("Fetch error:", err.message);
+    cache.status = "error";
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+setInterval(fetchData, 10000);
+fetchData();
+
+app.get("/data", (req, res) => {
+  res.json(cache);
 });
 
-socket.on("connect", () => {
-  console.log("Socket connected", socket.id);
-  cache.socket = "connected";
-
-  // 🔥 THIS IS THE KEY LINE (Anju room)
-  socket.emit("room", "anjujewellery");
+app.get("/", (req, res) => {
+  res.send("Anju Jewellery Scraper Running");
 });
 
-socket.on("disconnect", () => {
-  cache.socket = "disconnected";
-});
-
-socket.on("Liverate", (payload) => {
+app.listen(PORT, () => {
+  console.log("Server running on", PORT);
+});socket.on("Liverate", (payload) => {
   try {
     const rates = Array.isArray(payload) ? payload[1] : payload;
     if (Array.isArray(rates)) {
