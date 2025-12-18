@@ -1,84 +1,97 @@
-// ================= IMPORTS =================
 const express = require("express");
 const http = require("http");
-const { io } = require("socket.io-client");
+const { Server } = require("socket.io");
 
-// ================= CONFIG =================
-const PORT = process.env.PORT || 3000;
-const SOCKET_URL = "https://starlinesupport.in:10001";
-
-// ================= APP =================
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server);
+
+const PORT = process.env.PORT || 5000;
 
 // ================= CACHE =================
-let cache = {
-  status: "loading",
-  socket: "connecting",
+let live = {
   last_update: null,
-  data: []
+  spot: {},
+  future: {},
+  next: {},
+  table: []
 };
 
 // ================= SOCKET CLIENT =================
-const socket = io(SOCKET_URL, {
+const socketClient = require("socket.io-client");
+
+const ANJU_SOCKET = "https://starlinesupport.in"; 
+// ye domain anju ke socket ka base hai (actual socket wahi hota hai)
+
+const socket = socketClient(ANJU_SOCKET, {
   transports: ["websocket"],
-  path: "/socket.io/",
   reconnection: true,
-  reconnectionAttempts: Infinity,
-  reconnectionDelay: 3000,
-  timeout: 20000,
-  extraHeaders: {
-    Origin: "http://anjujewellery.in"
-  }
+  reconnectionDelay: 2000
 });
 
-// ================= SOCKET EVENTS =================
 socket.on("connect", () => {
-  console.log("✅ Socket connected:", socket.id);
-  cache.socket = "connected";
-
-  // join room (IMPORTANT)
-  socket.emit("room", "anjujewellery");
+  console.log("✅ Connected to Anju socket");
 });
 
-socket.on("disconnect", reason => {
-  console.log("❌ Socket disconnected:", reason);
-  cache.socket = "disconnected";
+socket.on("disconnect", () => {
+  console.log("❌ Socket disconnected");
 });
 
-socket.on("connect_error", err => {
-  console.error("⚠️ Socket error:", err.message);
-  cache.socket = "error";
+// ================= LIVE RATE =================
+socket.on("Liverate", (data) => {
+  data.forEach(item => {
+    if (item.symbol === "gold") live.future.gold = item;
+    if (item.symbol === "silver") live.future.silver = item;
+    if (item.symbol === "goldnext") live.next.gold = item;
+    if (item.symbol === "silvernext") live.next.silver = item;
+    if (item.symbol === "XAUUSD") live.spot.gold = item;
+    if (item.symbol === "XAGUSD") live.spot.silver = item;
+    if (item.symbol === "INRSpot") live.spot.inr = item;
+  });
+
+  live.last_update = new Date().toISOString();
 });
 
-// ================= LIVE RATE HANDLER =================
-socket.on("Liverate", payload => {
-  try {
-    if (!Array.isArray(payload)) return;
+// ================= TABLE (PRODUCT RATES) =================
+socket.on("message", (payload) => {
+  if (!payload || !payload.Rate) return;
 
-    cache = {
-      status: "ok",
-      socket: "connected",
-      last_update: new Date().toISOString(),
-      data: payload
-    };
+  live.table = payload.Rate.map(r => ({
+    name: r.Symbol,
+    weight: r.Description,
+    ask: r.Ask,
+    bid: r.Bid,
+    high: r.High,
+    low: r.Low,
+    time: r.Time,
+    type: r.DisplayRateType // fix / mcx
+  }));
 
-    console.log("📈 Live rate updated", payload.length);
-  } catch (e) {
-    console.error("Parse error:", e.message);
-  }
+  live.last_update = new Date().toISOString();
 });
 
-// ================= API ROUTES =================
-app.get("/", (req, res) => {
-  res.send("Bullion Live Socket Server OK");
-});
-
+// ================= API =================
 app.get("/data", (req, res) => {
-  res.json(cache);
+  if (!live.last_update) {
+    return res.json({
+      status: "loading",
+      socket: "connected",
+      data: []
+    });
+  }
+
+  res.json({
+    status: "ok",
+    socket: socket.connected ? "connected" : "error",
+    last_update: live.last_update,
+    data: live
+  });
 });
 
-// ================= START SERVER =================
-server.listen(PORT, "0.0.0.0", () => {
-  console.log("🚀 Server running on port", PORT);
+app.get("/", (req, res) => {
+  res.send("Option B Live Server Running");
+});
+
+server.listen(PORT, () => {
+  console.log("🚀 Server running on", PORT);
 });
