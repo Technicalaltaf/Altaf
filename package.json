@@ -1,12 +1,12 @@
 {
-  "name": "ambica-live",
+  "name": "bullion-live-socket",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "puppeteer": "^22.8.2"
+    "express": "^4.19.2",
+    "socket.io-client": "^4.7.5"
   }
 }
